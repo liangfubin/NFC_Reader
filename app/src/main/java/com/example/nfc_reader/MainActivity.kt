@@ -18,14 +18,20 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -52,6 +58,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -61,7 +68,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.nfc_reader.ui.theme.NFC_ReaderTheme
@@ -84,7 +90,7 @@ data class SuicaCard(
 )
 
 enum class Screen {
-    Cards, Scan, Detail
+    Cards, Detail
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -136,6 +142,15 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
     @Composable
     fun MainLayout() {
         val sheetState = rememberModalBottomSheetState()
+
+        // 监听 showScanSheet 状态，仅在弹窗显示时启动 NFC 扫描
+        LaunchedEffect(showScanSheet) {
+            if (showScanSheet) {
+                enableNfcReaderMode()
+            } else {
+                disableNfcReaderMode()
+            }
+        }
         
         Scaffold(
             bottomBar = {
@@ -158,15 +173,15 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
                 }
             }
         ) { innerPadding ->
-            Box(modifier = Modifier.padding(innerPadding)) {
+            // 这里不直接应用全局 padding，由子视图处理以实现沉浸式效果
+            Box(modifier = Modifier.fillMaxSize()) {
                 when (currentScreen) {
-                    Screen.Cards -> CardsScreen(scannedCards) { card ->
+                    Screen.Cards -> CardsScreen(scannedCards, innerPadding) { card ->
                         selectedCard = card
                         currentScreen = Screen.Detail
                     }
-                    Screen.Scan -> { /* Scan 现在由 BottomSheet 处理，背景显示卡包 */ }
                     Screen.Detail -> selectedCard?.let { 
-                        CardDetailScreen(it) { currentScreen = Screen.Cards }
+                        CardDetailScreen(it, innerPadding) { currentScreen = Screen.Cards }
                     }
                 }
                 
@@ -226,7 +241,7 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
             Text(
                 text = if (scanning) "正在读取..." else "请将卡片靠近手机背面",
                 style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
             Spacer(modifier = Modifier.height(32.dp))
             
@@ -245,8 +260,7 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
 
     // --- 生命周期与 NFC 处理 ---
 
-    override fun onResume() {
-        super.onResume()
+    private fun enableNfcReaderMode() {
         nfcAdapter?.enableReaderMode(
             this, this,
             NfcAdapter.FLAG_READER_NFC_F or NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK,
@@ -254,12 +268,24 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
         )
     }
 
-    override fun onPause() {
-        super.onPause()
+    private fun disableNfcReaderMode() {
         nfcAdapter?.disableReaderMode(this)
     }
 
+    override fun onResume() {
+        super.onResume()
+        // 移除全局启动，改为由 UI 状态控制
+    }
+
+    override fun onPause() {
+        super.onPause()
+        disableNfcReaderMode() // 页面不可见时强制关闭，确保安全
+    }
+
     override fun onTagDiscovered(tag: Tag) {
+        // 核心修复：只有在显示扫描弹窗时才处理卡片
+        if (!showScanSheet) return
+
         val nfcF = NfcF.get(tag) ?: return
         try {
             isScanning = true
@@ -346,57 +372,31 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
 // --- UI 界面组件 ---
 
 @Composable
-fun ScanScreen(isScanning: Boolean) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Surface(
-            modifier = Modifier.size(200.dp),
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    Icons.Default.Nfc,
-                    contentDescription = null,
-                    modifier = Modifier.size(100.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
-        Spacer(modifier = Modifier.height(48.dp))
-        Text(
-            text = if (isScanning) "正在读取..." else "准备扫描",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
-        )
-        Text(
-            text = "请将 Suica 卡靠近手机背面 NFC 区域",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(top = 8.dp)
-        )
-    }
-}
-
-@Composable
-fun CardsScreen(cards: List<SuicaCard>, onCardClick: (SuicaCard) -> Unit) {
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+fun CardsScreen(cards: List<SuicaCard>, innerPadding: PaddingValues, onCardClick: (SuicaCard) -> Unit) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        // 顶部占位，适配状态栏
+        Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+        
         Text(
             text = "我的卡包",
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 16.dp)
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
         )
         if (cards.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("暂无已扫描的卡片", color = Color.Gray)
             }
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(
+                    start = 16.dp, 
+                    end = 16.dp, 
+                    top = 8.dp, 
+                    bottom = innerPadding.calculateBottomPadding() + 16.dp
+                )
+            ) {
                 items(cards) { card ->
                     CardItem(card, onCardClick)
                 }
@@ -442,15 +442,18 @@ fun CardItem(card: SuicaCard, onClick: (SuicaCard) -> Unit) {
 }
 
 @Composable
-fun CardDetailScreen(card: SuicaCard, onBack: () -> Unit) {
+fun CardDetailScreen(card: SuicaCard, innerPadding: PaddingValues, onBack: () -> Unit) {
     Column(modifier = Modifier.fillMaxSize()) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.primaryContainer)
-                .padding(start = 8.dp, end = 24.dp, top = 16.dp, bottom = 24.dp)
         ) {
-            Column {
+            Column(
+                modifier = Modifier
+                    .windowInsetsPadding(WindowInsets.statusBars) // 适配顶部状态栏
+                    .padding(start = 8.dp, end = 24.dp, top = 8.dp, bottom = 24.dp)
+            ) {
                 IconButton(onClick = onBack) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
@@ -472,7 +475,10 @@ fun CardDetailScreen(card: SuicaCard, onBack: () -> Unit) {
             fontWeight = FontWeight.Bold
         )
         
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = innerPadding.calculateBottomPadding())
+        ) {
             items(card.history) { trans ->
                 ListItem(
                     headlineContent = { 
