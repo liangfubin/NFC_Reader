@@ -1,3 +1,25 @@
+# Kotlin
+.kotlin/
+
+# IDE / editor
+.vscode/
+.fleet/
+.history/
+
+# Signing / secrets
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+secrets.properties
+.env
+*.env
+
+# Release artifacts
+/app/release/
+/release/
+
 # Gradle
 .gradle/
 **/.gradle/
