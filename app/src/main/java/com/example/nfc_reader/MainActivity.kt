@@ -1,5 +1,7 @@
 package com.example.nfc_reader
 
+import android.content.Context
+import android.content.Intent
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.nfc.NfcAdapter
@@ -39,10 +41,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Nfc
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -62,17 +67,23 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import com.example.nfc_reader.ui.theme.NFC_ReaderTheme
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import java.io.File
+import java.io.FileOutputStream
+import java.nio.charset.Charset
 
 // --- 数据模型 ---
 
@@ -369,6 +380,41 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
     }
 }
 
+// --- 工具函数 ---
+
+fun exportSuicaData(context: Context, card: SuicaCard, format: String, encoding: String) {
+    val fileName = "Suica_${card.idm.take(8)}_${System.currentTimeMillis()}"
+    val extension = if (format == "text") ".txt" else ".csv"
+    val content = if (format == "text") {
+        "Suica 卡记录\n卡号: ${card.idm}\n余额: ¥${card.balance}\n\n" +
+                card.history.joinToString("\n") { trans ->
+                    "${trans.date}  ${if (trans.amount >= 0) "+" else ""}${trans.amount}  (余¥${trans.balance})"
+                }
+    } else {
+        "日期,金额,余额\n" + card.history.joinToString("\n") { trans ->
+            "${trans.date},${trans.amount},${trans.balance}"
+        }
+    }
+
+    try {
+        val cacheFile = File(context.cacheDir, fileName + extension)
+        val charset = Charset.forName(encoding)
+        FileOutputStream(cacheFile).use { fos ->
+            fos.write(content.toByteArray(charset))
+        }
+
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", cacheFile)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = if (format == "text") "text/plain" else "text/csv"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "导出记录"))
+    } catch (e: Exception) {
+        Log.e("Export", "Error exporting data", e)
+    }
+}
+
 // --- UI 界面组件 ---
 
 @Composable
@@ -443,6 +489,9 @@ fun CardItem(card: SuicaCard, onClick: (SuicaCard) -> Unit) {
 
 @Composable
 fun CardDetailScreen(card: SuicaCard, innerPadding: PaddingValues, onBack: () -> Unit) {
+    val context = LocalContext.current
+    var showExportMenu by remember { mutableStateOf(false) }
+    
     Column(modifier = Modifier.fillMaxSize()) {
         Box(
             modifier = Modifier
@@ -452,13 +501,53 @@ fun CardDetailScreen(card: SuicaCard, innerPadding: PaddingValues, onBack: () ->
             Column(
                 modifier = Modifier
                     .windowInsetsPadding(WindowInsets.statusBars) // 适配顶部状态栏
-                    .padding(start = 8.dp, end = 24.dp, top = 8.dp, bottom = 24.dp)
+                    .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 24.dp)
             ) {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "返回"
-                    )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "返回"
+                        )
+                    }
+                    Box {
+                        IconButton(onClick = { showExportMenu = true }) {
+                            Icon(
+                                imageVector = Icons.Default.Download,
+                                contentDescription = "导出"
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showExportMenu,
+                            onDismissRequest = { showExportMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("导出为文本 (UTF-8)") },
+                                onClick = {
+                                    showExportMenu = false
+                                    exportSuicaData(context, card, "text", "UTF-8")
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("导出为 CSV (Shift-JIS - Excel)") },
+                                onClick = {
+                                    showExportMenu = false
+                                    exportSuicaData(context, card, "csv", "Shift-JIS")
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("导出为 CSV (UTF-8)") },
+                                onClick = {
+                                    showExportMenu = false
+                                    exportSuicaData(context, card, "csv", "UTF-8")
+                                }
+                            )
+                        }
+                    }
                 }
                 Column(modifier = Modifier.padding(start = 16.dp)) {
                     Text("余额详情", style = MaterialTheme.typography.labelLarge)
